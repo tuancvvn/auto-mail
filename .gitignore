@@ -1,0 +1,20 @@
+# Bỏ qua toàn bộ file log
+*.log
+*.csv
+# Bỏ qua thư mục .venv (virtual environment)
+.venv/
+*.env
+.env
+# Bỏ qua file dữ liệu
+*.xslx
+*.pdf
+*.zip
+*.rar
+*.tar
+*.jpg
+*.png
+# (Tuỳ chọn) Bỏ qua các file Python bytecode và cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
