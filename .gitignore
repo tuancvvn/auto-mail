@@ -6,7 +6,7 @@
 *.env
 .env
 # Bỏ qua file dữ liệu
-*.xslx
+*.xlsx
 *.pdf
 *.zip
 *.rar
