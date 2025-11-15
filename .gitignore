@@ -5,7 +5,9 @@
 .venv/
 *.env
 .env
-venv
+venv/
+build/
+dist/
 # Bỏ qua file dữ liệu
 *.xlsx
 *.pdf
