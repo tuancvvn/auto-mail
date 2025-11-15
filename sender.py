@@ -1,6 +1,7 @@
 import os
 import re
 import csv
+import sys
 import time
 import random
 import smtplib
@@ -13,7 +14,7 @@ from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
+#current_dir = os.path.dirname(os.path.abspath(__file__))
 
 senders = []
 sender_index = 0
@@ -34,12 +35,16 @@ def log(message):
         writer.writerow([timestamp, message])
 
 
-def load_config(path):
-    if not os.path.exists(path):
-        print(f"❌ Không tìm thấy file cấu hình: {path}")
+def load_config(config_dir):
+    #config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), config_filename)
+    config_path = os.path.join(config_dir, "sender.conf")
+
+    if not os.path.exists(config_path):
+        print(f"❌ Không tìm thấy file cấu hình: {config_path}")
         return None
+    
     cfg = configparser.ConfigParser()
-    cfg.read(path)
+    cfg.read(config_path)
     return cfg
 
 
@@ -217,9 +222,14 @@ def get_next_sender():
 
 def main():
     global senders
+    global current_dir
+    if getattr(sys, 'frozen', False):   # nếu đang chạy trong .exe
+        current_dir = os.path.dirname(sys.executable)
+    else:
+        current_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Load config
-    config = load_config(os.path.join(current_dir, "sender.conf"))
+    config = load_config(current_dir)
     if not config:
         return
 

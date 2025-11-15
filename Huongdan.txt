@@ -1,2 +1,4 @@
 Hướng dẫn biên dịch thành file exe
 1. cài đặt pyinstaller: pip install pyinstaller
+2. lệnh biên dịch: pyinstaller --onefile sender.py
+3. chạy file exe: power shell "./sender.exe"
