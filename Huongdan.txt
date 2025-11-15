@@ -1,0 +1,2 @@
+Hướng dẫn biên dịch thành file exe
+1. cài đặt pyinstaller: pip install pyinstaller
