@@ -5,6 +5,7 @@
 .venv/
 *.env
 .env
+venv
 # Bỏ qua file dữ liệu
 *.xlsx
 *.pdf

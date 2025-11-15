@@ -1,172 +1,189 @@
+import os
+import re
+import csv
+import time
+import random
 import smtplib
 import pandas as pd
-import re
-import os
-import time
-import csv
-import random
 import configparser
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
-from email.mime.application import MIMEApplication
-from email.utils import formataddr
-from email.mime.image import MIMEImage
 from datetime import datetime
+from email.utils import formataddr
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Gửi email từ danh sách người gửi theo thứ tự ngẫu nhiên
 senders = []
 sender_index = 0
 
-def load_config(config_path):
-    if not os.path.exists(config_path):
-        print(f"❌ Không tìm thấy file cấu hình: {config_path}")
-        return None
 
-    config = configparser.ConfigParser()
-    config.read(config_path)
-    return config
+# ===================== COMMON HELPERS =====================
 
-def check_required_files(config):
-    required_files = {
-        '📄 File danh sách người nhận': config['FILES']['recipients_excel'],
-        '🖼 Logo chèn trong nội dung': config['FILES']['logo_path'],
-        '🧾 File mẫu nội dung HTML': config['FILES']['email_template'],
-    }
-
-    print("🔍 Kiểm tra các file cần thiết:")
-    all_ok = True
-
-    for desc, path in required_files.items():
-        full_path = os.path.join(current_dir, path)
-        if os.path.exists(full_path):
-            print(f"✅ {desc}: Tìm thấy ({full_path})")
-        else:
-            print(f"❌ {desc}: KHÔNG tìm thấy! ({full_path})")
-            all_ok = False
-
-    # Xử lý đặc biệt cho file đính kèm PDF có thể chứa nhiều file
-    attachment_list = config.get("FILES", "attachment_pdf", fallback="")
-    attachments = [f.strip() for f in attachment_list.split(",") if f.strip()]
-    for file_path in attachments:
-        full_path = os.path.join(current_dir, file_path)
-        if os.path.exists(full_path):
-            print(f"✅ 📎 File đính kèm PDF: Tìm thấy ({full_path})")
-        else:
-            print(f"❌ 📎 File đính kèm PDF: KHÔNG tìm thấy! ({full_path})")
-            all_ok = False
-
-    return all_ok
-
-# Kiểm tra định dạng email
-def is_valid_email(email):
-    if pd.isna(email) or str(email).strip() == "":
-        return False, "Địa chỉ email bị bỏ trống."
-
-    email = str(email).strip()
-    regex = r"^[\w\.-]+@[\w\.-]+\.\w+$"
-    if not re.match(regex, email):
-        return False, f"Địa chỉ email sai định dạng: {email}"
-
-    return True, ""
-
-# Kiểm tra thông tin cổ đông
-def is_valid_shareholder_info(hoten, maso):
-    if pd.isna(hoten) or str(hoten).strip() == "":
-        return False
-    if pd.isna(maso) or str(maso).strip() == "":
-        return False
-    return True
-
-def get_next_sender():
-    global sender_index
-    sender = senders[sender_index]
-    sender_index = (sender_index + 1) % len(senders)
-    return sender
-
-# Ghi log với timestamp
-def write_log(log_message):
+def log(message):
+    """Ghi log ra file CSV."""
     log_path = os.path.join(current_dir, "log.csv")
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    file_exists = os.path.isfile(log_path)
-    with open(log_path, mode="a", encoding="utf-8-sig", newline="") as log_file:
-        writer = csv.writer(log_file)
-        if not file_exists:
+    new_file = not os.path.exists(log_path)
+    with open(log_path, "a", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        if new_file:
             writer.writerow(["Thời gian", "Nội dung"])
-        writer.writerow([timestamp, log_message])
+        writer.writerow([timestamp, message])
 
-def send_email(sender_email, recipient_email, full_name, shareholder_id, t_holding, config):
+
+def load_config(path):
+    if not os.path.exists(path):
+        print(f"❌ Không tìm thấy file cấu hình: {path}")
+        return None
+    cfg = configparser.ConfigParser()
+    cfg.read(path)
+    return cfg
+
+
+def file_exists(path):
+    return os.path.exists(os.path.join(current_dir, path))
+
+
+# ===================== VALIDATIONS =====================
+
+def check_required_files(config):
+    print("🔍 Kiểm tra các file cần thiết:")
+    all_ok = True
+
+    required = {
+        "📄 File danh sách người nhận": config["FILES"]["recipients_excel"],
+        "🖼 Logo chèn trong nội dung": config["FILES"]["logo_path"],
+        "🧾 File mẫu nội dung HTML": config["FILES"]["email_template"],
+    }
+
+    # Kiểm tra file bắt buộc
+    for desc, file_path in required.items():
+        full = os.path.join(current_dir, file_path)
+        if os.path.exists(full):
+            print(f"✅ {desc}: Tìm thấy ({full})")
+        else:
+            print(f"❌ {desc}: KHÔNG tìm thấy! ({full})")
+            all_ok = False
+
+    # PDF – nếu có
+    pdf_list = config.get("FILES", "attachment_pdf", fallback="").strip()
+    if pdf_list:
+        for f in pdf_list.split(","):
+            f = f.strip()
+            full = os.path.join(current_dir, f)
+            if os.path.exists(full):
+                print(f"✅ 📎 File đính kèm PDF: Tìm thấy ({full})")
+            else:
+                print(f"❌ 📎 File đính kèm PDF: KHÔNG tìm thấy! ({full})")
+                all_ok = False
+    else:
+        print("ℹ️ Không khai báo file PDF đính kèm — bỏ qua.")
+
+    return all_ok
+
+
+def validate_email(email):
+    if pd.isna(email) or not str(email).strip():
+        return False, "Email bị bỏ trống."
+    pattern = r"^[\w\.-]+@[\w\.-]+\.\w+$"
+    if not re.match(pattern, str(email).strip()):
+        return False, f"Sai định dạng email: {email}"
+    return True, ""
+
+
+def validate_shareholder(row, row_index):
+    if pd.isna(row["HoTen"]) or pd.isna(row["MaSoCoDong"]):
+        return False, f"❌ Dòng {row_index}: Thiếu thông tin cổ đông."
+    return True, ""
+
+
+# ===================== EMAIL BUILDING =====================
+
+def attach_image(msg, path, cid):
+    """Gắn ảnh inline nếu tồn tại."""
+    if not path:
+        print(f"ℹ️ Không có {cid} đính kèm — bỏ qua.")
+        return
+
+    full = os.path.join(current_dir, path)
+
+    if file_exists(path):
+        with open(full, "rb") as f:
+            img = MIMEImage(f.read())
+            img.add_header("Content-ID", f"<{cid}>")
+            img.add_header("Content-Disposition", "inline", filename=path)
+            msg.attach(img)
+    else:
+        print(f"⚠️ File ảnh không tồn tại: {full}")
+        log(f"⚠️ File ảnh không tồn tại: {full}")
+
+
+def attach_pdfs(msg, config):
+    """Đính kèm tất cả PDF."""
+    pdfs = config.get("FILES", "attachment_pdf", fallback="").strip()
+    if not pdfs:
+        print("ℹ️ Không có file PDF đính kèm — bỏ qua.")
+        return
+
+    for file_path in [p.strip() for p in pdfs.split(",") if p.strip()]:
+        full = os.path.join(current_dir, file_path)
+        if os.path.exists(full):
+            with open(full, "rb") as f:
+                part = MIMEApplication(f.read(), _subtype="pdf")
+                part.add_header("Content-Disposition", "attachment", filename=os.path.basename(file_path))
+                msg.attach(part)
+        else:
+            print(f"⚠️ File PDF không tồn tại: {full}")
+            log(f"⚠️ File PDF không tồn tại: {full}")
+
+
+# ===================== SEND EMAIL =====================
+
+def send_email(sender, recipient, name, code, holding, config):
     smtp_server = config["SMTP"]["server"]
     smtp_port = int(config["SMTP"]["port"])
     password = config["SMTP"]["password"]
 
-    # Tạo message chính kiểu multipart/related
-    msg_root = MIMEMultipart("related")
-    msg_root["Subject"] = f"HAGL Group. Notice to - {full_name}"
-    msg_root["From"] = formataddr(("HAGL Group", sender_email))
-    msg_root["To"] = recipient_email
-    msg_root["Reply-To"] = "daihoicodong@hagl.com.vn"
-    msg_root.preamble = "This is a multi-part message in MIME format."
+    # Tạo message
+    msg = MIMEMultipart("related")
+    msg["Subject"] = f"HAGL Group. Notice to - {name}"
+    msg["From"] = formataddr(("HAGL Group", sender))
+    msg["To"] = recipient
+    msg["Reply-To"] = "daihoicodong@hagl.com.vn"
 
-    # Tạo phần nội dung HTML lồng bên trong multipart/alternative
-    msg_alternative = MIMEMultipart("alternative")
-    msg_root.attach(msg_alternative)
+    # Nội dung HTML
+    alt = MIMEMultipart("alternative")
+    msg.attach(alt)
 
     try:
-        # Đọc nội dung HTML và thay thế các biến
-        with open(os.path.join(current_dir, config["FILES"]["email_template"]), "r", encoding="utf-8") as file:
-            html_content = file.read()
-            html_content = html_content.replace("{ho_ten}", str(full_name))
-            html_content = html_content.replace("{tt_dksh}", str(shareholder_id))
-            # html_content = html_content.replace("{so_cp}", str(t_holding))
-            formatted_holding = "{:,}".format(int(float(t_holding))).replace(",", ".")
-            html_content = html_content.replace("{so_cp}", formatted_holding)
-        # Đính nội dung HTML vào alternative
-        msg_alternative.attach(MIMEText(html_content, "html"))
+        template_path = os.path.join(current_dir, config["FILES"]["email_template"])
+        with open(template_path, "r", encoding="utf-8") as f:
+            html = f.read()
 
-        # Gắn ảnh inner_img (ảnh QR code)
-        inner_img = config["FILES"]["inner_img"]
-        inner_img_path = os.path.join(current_dir, inner_img)
-        with open(inner_img_path, "rb") as img_file:
-            image = MIMEImage(img_file.read())
-            image.add_header("Content-ID", "<inner_image>")
-            image.add_header("Content-Disposition", "inline", filename=inner_img)
-            msg_root.attach(image)
+        html = html.replace("{ho_ten}", str(name))
+        html = html.replace("{tt_dksh}", str(code))
+        html = html.replace("{so_cp}", "{:,}".format(int(float(holding))).replace(",", "."))
 
-        # Gắn logo công ty
-        logo_filename = config["FILES"]["logo_path"]
-        logo_path = os.path.join(current_dir, logo_filename)
-        with open(logo_path, "rb") as logo_file:
-            logo = MIMEImage(logo_file.read())
-            logo.add_header("Content-ID", "<company_logo>")
-            logo.add_header("Content-Disposition", "inline", filename=logo_filename)
-            msg_root.attach(logo)
+        alt.attach(MIMEText(html, "html"))
 
-    except FileNotFoundError as e:
-        print(f"❌ Không tìm thấy file: {e}")
-        write_log(f"❌ Không tìm thấy file: {e}")
+        # Logo luôn bắt buộc
+        attach_image(msg, config["FILES"]["logo_path"], "company_logo")
+
+        # Ảnh QR (tùy chọn)
+        attach_image(msg, config["FILES"].get("inner_img", "").strip(), "inner_image")
+
+        # PDF (tùy chọn)
+        attach_pdfs(msg, config)
+
+    except Exception as e:
+        print(f"❌ Lỗi đọc template hoặc file đính kèm: {e}")
+        log(f"❌ Lỗi email build: {e}")
         return
 
-    # Đính kèm các file PDF nếu có
-    try:
-        attachments = config.get("FILES", "attachment_pdf", fallback="")
-        attachment_paths = [f.strip() for f in attachments.split(",") if f.strip()]
-        for file_path in attachment_paths:
-            full_path = os.path.join(current_dir, file_path)
-            with open(full_path, "rb") as f:
-                part = MIMEApplication(f.read(), _subtype="pdf")
-                part.add_header("Content-Disposition", "attachment", filename=os.path.basename(file_path))
-                msg_root.attach(part)
-    except FileNotFoundError as e:
-        print(f"❌ Không tìm thấy file PDF đính kèm: {e}")
-        write_log(f"❌ Không tìm thấy file PDF đính kèm: {e}")
-        return
-
-    # Gửi email
+    # Gửi
     try:
         if smtp_port == 465:
             server = smtplib.SMTP_SSL(smtp_server, smtp_port)
@@ -174,96 +191,109 @@ def send_email(sender_email, recipient_email, full_name, shareholder_id, t_holdi
             server = smtplib.SMTP(smtp_server, smtp_port)
             server.starttls()
 
-        server.login(sender_email, password)
-        server.sendmail(sender_email, recipient_email, msg_root.as_string())
-        print(f"✅ [{sender_email}] Gửi đến {recipient_email} thành công!")
-        write_log(f"✅ [{sender_email}] Gửi đến {recipient_email} thành công")
+        server.login(sender, password)
+        server.sendmail(sender, recipient, msg.as_string())
+        print(f"✅ [{sender}] → {recipient}")
+        log(f"Sent OK: {sender} → {recipient}")
 
-    except smtplib.SMTPRecipientsRefused:
-        print(f"⚠️ Từ chối địa chỉ email: {recipient_email}")
-        write_log(f"⚠️ Từ chối địa chỉ email: {recipient_email}")
-    except smtplib.SMTPException as e:
-        print(f"❌ SMTP lỗi với {recipient_email}: {e}")
-        write_log(f"❌ SMTP lỗi với {recipient_email}: {e}")
     except Exception as e:
-        print(f"⚠️ Lỗi khác với {recipient_email}: {e}")
-        write_log(f"⚠️ Lỗi khác với {recipient_email}: {e}")
+        print(f"❌ SMTP lỗi: {e}")
+        log(f"❌ SMTP lỗi gửi đến {recipient}: {e}")
     finally:
-        if 'server' in locals():
+        try:
             server.quit()
+        except:
+            pass
+
+
+# ===================== MAIN =====================
+
+def get_next_sender():
+    global sender_index
+    s = senders[sender_index]
+    sender_index = (sender_index + 1) % len(senders)
+    return s
 
 
 def main():
     global senders
-    config_file = os.path.join(current_dir, "sender.conf")
-    config = load_config(config_file)
+
+    # Load config
+    config = load_config(os.path.join(current_dir, "sender.conf"))
     if not config:
         return
 
+    # Kiểm tra file
     if not check_required_files(config):
         return
 
-    senders = [email.strip() for email in config["SENDER"]["emails"].split(",")]
+    # Load danh sách email người gửi
+    senders = [e.strip() for e in config["SENDER"]["emails"].split(",") if e.strip()]
     if not senders:
-        print("❌ Không tìm thấy email người gửi nào trong cấu hình.")
+        print("❌ Không tìm thấy email người gửi.")
         return
     random.shuffle(senders)
 
-    recipients_file = os.path.join(current_dir, config["FILES"]["recipients_excel"])
+    # Load Excel người nhận
     try:
-        df = pd.read_excel(recipients_file)
+        df = pd.read_excel(
+            os.path.join(current_dir, config["FILES"]["recipients_excel"]),
+            dtype={"MaSoCoDong": str}
+        )
     except Exception as e:
-        print(f"❌ Lỗi đọc file Excel người nhận: {e}")
-        return
-    
-    required_columns = ["Email", "HoTen", "MaSoCoDong"]
-    if not all(col in df.columns for col in required_columns):
-        print(f"❌ Thiếu cột cần thiết: {', '.join(required_columns)}")
+        print(f"❌ Lỗi đọc file Excel: {e}")
         return
 
-    confirm = input("Đã đủ điều kiện gửi thư, Bạn có muốn gửi email không? (y/n): ").strip().lower()
-    if confirm != "y":
-        print("🛑 Đã huỷ.")
+    # Kiểm tra cột
+    required_cols = ["Email", "HoTen", "MaSoCoDong", "SoCP"]
+    if not all(c in df.columns for c in required_cols):
+        print("❌ Thiếu các cột bắt buộc:", ", ".join(required_cols))
         return
 
+    # Xác nhận gửi
+    if input("Đã đủ điều kiện gửi thư, bạn muốn gửi email không? (y/n): ").lower() != "y":
+        print("🛑 Đã hủy.")
+        return
+
+    # Nhập dòng bắt đầu
     try:
-        start_row = int(input("📌 Bạn muốn bắt đầu gửi từ dòng thứ mấy? (2 là dòng đầu tiên): ").strip())
-        if start_row < 2 or start_row > len(df):
-            print("❌ Dòng bắt đầu không hợp lệ. Mặc định bắt đầu từ dòng 2.")
-            start_row = 2
-    except ValueError:
-        print("❌ Giá trị không hợp lệ. Mặc định bắt đầu từ dòng 2.")
+        start_row = int(input("📌 Bắt đầu từ dòng số mấy? (2 = dòng đầu tiên): ").strip())
+        start_row = max(2, min(start_row, len(df)))
+    except:
+        print("❌ Giá trị không hợp lệ. Mặc định dòng 2.")
         start_row = 2
 
-    sent_count = 0
-    print("🚀 Bắt đầu gửi email... Nhấn Ctrl+C để dừng lại an toàn.\n")
+    print("\n🚀 Bắt đầu gửi email... Nhấn Ctrl+C để dừng.\n")
+
+    sent = 0
     try:
-        for index, row in df.iloc[start_row - 2:].iterrows():
-            # Kiểm tra địa chi email
-            is_valid, error_msg = is_valid_email(row["Email"])
-            if not is_valid:
-                print(f"❌ Dòng {index + 2}: {error_msg}")
-                write_log(f"❌ Dòng {index + 2}: {error_msg}")
+        for idx, row in df.iloc[start_row - 2:].iterrows():
+            row_index = idx + 2
+
+            # Validate email
+            ok, msg = validate_email(row["Email"])
+            if not ok:
+                print(f"❌ Dòng {row_index}: {msg}")
+                log(msg)
                 continue
 
-            # Kiểm tra thông tin cổ đông
-            if not is_valid_shareholder_info(row["HoTen"], row["MaSoCoDong"]):
-                print(f"❌ Dòng {index + 2}: Không có đủ thông tin cổ đông.")
-                write_log(f"❌ Dòng {index + 2}: Không có đủ thông tin cổ đông.")
+            # Validate cổ đông
+            ok, msg = validate_shareholder(row, row_index)
+            if not ok:
+                print(msg)
+                log(msg)
                 continue
 
-            # OK hết rồi, gửi đi thôi
-            email = str(row["Email"]).strip()
-            sender_email = get_next_sender()
-            send_email(sender_email, email, row["HoTen"], row["MaSoCoDong"], row["SoCP"], config)
-            sent_count += 1
-            time.sleep(10)
+            sender = get_next_sender()
+            send_email(sender, row["Email"], row["HoTen"], row["MaSoCoDong"], row["SoCP"], config)
+            sent += 1
+            time.sleep(2)
 
     except KeyboardInterrupt:
-        print("\n🛑 Đã dừng gửi theo yêu cầu người dùng (Ctrl+C).")
-        write_log("🛑 Đã dừng gửi theo yêu cầu người dùng (Ctrl+C).")
+        print("\n🛑 Đã dừng theo yêu cầu.")
 
-    print(f"\n✅ Đã gửi thành công {sent_count} email.")
+    print(f"\n✅ Hoàn tất. Đã gửi {sent} email.")
+
 
 if __name__ == "__main__":
     main()
